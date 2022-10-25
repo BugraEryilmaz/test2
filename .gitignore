@@ -1,0 +1,5 @@
+.vscode/
+boost*/
+capstone/
+*.gz
+*.txt
