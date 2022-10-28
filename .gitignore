@@ -3,3 +3,4 @@ boost*/
 capstone/
 *.gz
 *.txt
+*.data*

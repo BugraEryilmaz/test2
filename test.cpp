@@ -72,14 +72,14 @@ string ins_type(cs_insn *insn) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <gzipped input file>" << std::endl;
-    }
+    // if (argc < 2) {
+    //     std::cerr << "Usage: " << argv[0] << " <gzipped input file>" << std::endl;
+    // }
     // Read from the first command line argument, assume it's gzipped
-    std::ifstream file(argv[1], std::ios_base::in | std::ios_base::binary);
+    // std::ifstream file(argv[1], std::ios_base::in | std::ios_base::binary);
     boost::iostreams::filtering_streambuf<boost::iostreams::input> inbuf;
-    inbuf.push(boost::iostreams::gzip_decompressor());
-    inbuf.push(file);
+    // inbuf.push(boost::iostreams::gzip_decompressor());
+    inbuf.push(std::cin);
     // Convert streambuf to istream
     std::istream instream(&inbuf);
     // Iterate lines
@@ -94,25 +94,16 @@ int main(int argc, char **argv) {
     if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK) return -1;
     vector<cs_insn *> instrs;
 
-    unordered_map<string, int64_t> ins_histo;
-    int64_t hlt=0, nop=0, aes=0;
+    unordered_map<string, int64_t> block_histo;
+    unordered_map<int64_t, int64_t> blocksize_histo;
+    int64_t hlt = 0, nop = 0, aes = 0, blockcount = 0;
+    int64_t popcnt = 0, pushcount = 0;
     // length_histo.resize(16);
     while (std::getline(instream, line)) {
         // std::cout << line << std::endl;
         // std::cout << int(line[22]) << "\t" << int(line[23]) << "\n";
         istringstream iss(line);
         int x = 0;
-        // while(getline(iss, line, ' ')){
-        //     if(int(line[0]) != 0){
-        //         //cout << line << "\t" << int(line[0]) << "\n";
-        //         x++;
-        //         if(x == 3){
-        //             //cout << "line: " << line << "\n";
-        //             length = stoi(line);
-        //             length_histo[length]++;
-        //         }
-        //     }
-        // }
 
         iss >> pid;
         iss >> line;
@@ -144,78 +135,73 @@ int main(int argc, char **argv) {
             } else {
                 // cout << "not aes: " << mnemonic << "\n";
             }
+            if (!strncmp(insn[j].mnemonic, "pop", 3)) popcnt++;
+            if (!strncmp(insn[j].mnemonic, "push", 4)) pushcount++;
             // if (hlt != 0) {
             //     cout << std::hex << insn[j].address << " " << insn[j].mnemonic << " " << insn[j].op_str << "\n";
             // }
             // if (hlt >= 6) exit(1);
             if (mnemonic == "branch") {
                 // cout << "\n";
-                if (instrs.size() != 0) {
-                    cs_insn *tmp = instrs.back();
-                    string tmp_mnemonic = ins_type(tmp);
-                    string key = string(tmp_mnemonic) + " " + string(mnemonic);
-                    ins_histo[key] = ins_histo[key] + 1;
+                instrs.push_back(&insn[j]);
+                blocksize_histo[instrs.size()] += 1;
+                string key;
+                blockcount++;
+                for (auto instr : instrs) {
+                    key += instr->mnemonic;
+                    key += " ";
+                    // key += instr->op_str;
+                    // key += "\n";
                 }
+                block_histo[key] += 1;
                 for (auto i : instrs)
                     cs_free(i, 1);
                 instrs.clear();
-                cs_free(insn, count);
-            //     // cout << "buffer cleared\n";
             } else {
-                // for (auto i : instrs) {
-                //     if (check_dependency(&i->detail->x86, &insn[j].detail->x86)) {
-                //         cout << "Dependency found between " << i->mnemonic << " and " << insn[j].mnemonic <<
-                //         "\n";
-                //     }
-                //     else {
-                //         // keep statistics about this pair
-                //     }
-                // }
-                if (instrs.size() == 0) {
-                    // cout << "there are no instructions in the buffer\n";
-                    instrs.push_back(&insn[j]);
-                } else {
-                    // cout << "there are instructions in the buffer\n";
-                    cs_insn *tmp = instrs.back();
-                    string tmp_mnemonic = ins_type(tmp);
-                    instrs.push_back(&insn[j]);
-                    if (check_dependency(&tmp->detail->x86, &insn[j].detail->x86)) {
-                        cout << "Dependency found between " << tmp_mnemonic << " and " << mnemonic << "\n";
-                    } else {
-                        // keep statistics about this pair
-                        string key = string(tmp_mnemonic) + " " + string(mnemonic);
-                        ins_histo[key] = ins_histo[key] + 1;
-                    }
-                }
+                instrs.push_back(&insn[j]);
             }
 
-        } else{            
+        } else {
             printf("ERROR: Failed to disassemble given code!\n");
             cout << std::hex << "pid: " << pid << " ip: " << ip << " length: " << length << " bytes: ";
             for (int i = 0; i < length; i++) {
-                cout << std::hex << (unsigned int) data[i] << " ";
+                cout << std::hex << (unsigned int)data[i] << " ";
             }
             cout << "\n";
-
         }
         // std::cin >> line;
         instr_count++;
         // if (instr_count % 10000000 == 0) {
-        if (instr_count % 1000000 == 0) {
+        if (blockcount % 1000000 == 0) {
             //     break;
             // }
-            uint64_t total = 0, current = 0, w_sum = 0;
-            for (auto ins : ins_histo) {
-                double rate = ins.second * 100.0 / instr_count;
-                if (rate > 1) printf("%s \t %lf\n", ins.first.c_str(), rate);
-            }
+            double avg = 0;
+            // for (auto ins : ins_histo) {
+            //     double rate = ins.second * 100.0 / instr_count;
+            //     if (rate > 1) printf("%s \t %lf\n", ins.first.c_str(), rate);
+            // }
             printf("hlt_cnt = %lu, nop_cnt = %lu, aes_cnt=%lu\n", hlt, nop, aes);
-            printf("hlt_cnt = %lf, nop_cnt = %lf, aes_cnt=%lf\n", hlt*100.0/instr_count, nop*100.0/instr_count, aes*100.0/instr_count);
+            printf("hlt_cnt = %lf, nop_cnt = %lf, aes_cnt=%lf\n", hlt * 100.0 / instr_count, nop * 100.0 / instr_count,
+                   aes * 100.0 / instr_count);
+            printf("push = %lu, pop = %lu\n", pushcount, popcnt);
             printf("Total instructions: %lu\n", instr_count);
             printf("\n-------------------------------------------\n");
+            printf("Block count: %lu\n", blockcount);
+            for (auto block : block_histo) {
+                double rate = block.second * 100.0 / blockcount;
+                if (rate > 1) printf("%s \t %lf\n", block.first.c_str(), rate);
+            }
+            printf("\n-------------------------------------------\n");
+            for (auto blocksize : blocksize_histo) {
+                double rate = blocksize.second * 100.0 / blockcount;
+                avg += rate * blocksize.first / 100.0;
+                if (rate > 1) printf("block size :%lu \t freq :%lf\n", blocksize.first, rate);
+            }
+            printf("Average block size: %lf\n", avg);
+            printf("\n--------------------------------------------------------------------------------------\n");
         }
     }
     // Cleanup
-    file.close();
+    // file.close();
     std::cout << instr_count << "\n";
 }
